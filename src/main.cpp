@@ -1,10 +1,9 @@
 #include <Arduino.h>
-// #include <jled.h>
 #include "shared.h"
 #include "pid.h"
 #include "heater.h"
-// #include <status-led.h>
 #include "ble.h"
+#include "OTA.h"
 
 // JLed led = JLed(22).Off().LowActive();
 void setup() {
@@ -21,6 +20,8 @@ void setup() {
   xTaskCreatePinnedToCore(heaterTask, "heater", 4096, env, 2, NULL, 1);
   xTaskCreatePinnedToCore(pidTask, "pid", 4096, env, 1, NULL, 1);
   xTaskCreatePinnedToCore(bleTask, "ble", 20000, env, 1, NULL, 1);
+
+  setupOTA("Espresso-µ", "y", "z");
 
   // setStatusLED(led_off);
   // startLEDTask();
