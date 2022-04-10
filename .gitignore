@@ -1,6 +1,6 @@
+.vscode
 .pio
 .clang_complete
 .gcc-flags.json
 .ccls
 include/credentials.h
-.vscode
