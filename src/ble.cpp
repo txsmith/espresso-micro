@@ -45,11 +45,11 @@ public:
   }
   void onWrite(NimBLECharacteristic *pCharacteristic) {
     Serial.printf("New value written on %s\n", pCharacteristic->getUUID().toString().c_str());
-    blinkStatusLED(500, 20);
     EspressoNotification notification = {
         notificationType,
         new T(pCharacteristic->getValue().getValue<T>())};
     xQueueSendToBack(notifyQueue, &notification, 0);
+    blinkStatusLED(500, 20);
   };
 };
 

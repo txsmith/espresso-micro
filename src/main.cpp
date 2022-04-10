@@ -3,7 +3,8 @@
 #include "pid.h"
 #include "heater.h"
 #include "ble.h"
-#include "OTA.h"
+#include "credentials.h"
+#include "ota.h"
 
 // JLed led = JLed(22).Off().LowActive();
 void setup() {
@@ -12,6 +13,9 @@ void setup() {
   pinMode(STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, LOW);
   Serial.begin(115200);
+
+  setupOTA("espressomicro", WIFI_SSID, WIFI_PASSWORD);
+
   EspressoEnv *env = new EspressoEnv();
   env->bleQueue = xQueueCreate(32, sizeof(EspressoNotification));
   env->pidQueue = xQueueCreate(32, sizeof(EspressoNotification));
@@ -21,7 +25,6 @@ void setup() {
   xTaskCreatePinnedToCore(pidTask, "pid", 4096, env, 1, NULL, 1);
   xTaskCreatePinnedToCore(bleTask, "ble", 20000, env, 1, NULL, 1);
 
-  setupOTA("Espresso-µ", "y", "z");
 
   // setStatusLED(led_off);
   // startLEDTask();

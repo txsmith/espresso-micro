@@ -37,13 +37,13 @@
 //   currentState = newState;
 // }
 
-void blinkStatusLED(int millis, int flashesPerSec = 10) {
+void blinkStatusLED(int millis, int flashesPerSec) {
   int millisPerFlash = 1000 / flashesPerSec;
   int flashes = millis / millisPerFlash;
   for (int i = 0; i < flashes; i++) {
     digitalWrite(STATUS_LED_PIN, HIGH);
-    vTaskDelay(millisPerFlash / portTICK_RATE_MS);
+    vTaskDelay(millisPerFlash / 2 / portTICK_RATE_MS);
     digitalWrite(STATUS_LED_PIN, LOW);
-    vTaskDelay(millisPerFlash / portTICK_RATE_MS);
+    vTaskDelay(millisPerFlash / 2 / portTICK_RATE_MS);
   }
 }

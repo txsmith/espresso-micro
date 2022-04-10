@@ -1,3 +1,4 @@
+#include <Adafruit_MAX31865.h>
 #include <PID_v1.h>
 #include <Preferences.h>
 #include "shared.h"
@@ -13,6 +14,55 @@
 double currentTemp, output;
 
 Preferences preferences;
+
+#define RREF 429.0
+#define RNOMINAL 100.0
+
+Adafruit_MAX31865 setupSensor() {
+  Adafruit_MAX31865 thermo = Adafruit_MAX31865(SCL, MOSI, MISO, SCK);
+  thermo.begin(MAX31865_2WIRE);
+  return thermo;
+}
+Adafruit_MAX31865 thermo = setupSensor();
+
+double getCurrentTemperature() {
+  uint16_t rtd = thermo.readRTD();
+
+  // Serial.print("RTD value: "); Serial.println(rtd);
+  float ratio = rtd;
+  ratio /= 32768;
+  // Serial.print("Ratio = "); Serial.println(ratio,8);
+  // Serial.print("Resistance = "); Serial.println(RREF*ratio,8);
+  double temperature = thermo.temperature(RNOMINAL, RREF);
+  // Serial.print("Temperature = "); Serial.println(temperature);
+
+  // Check and print any faults
+  uint8_t fault = thermo.readFault();
+  if (fault) {
+    temperature = 999;
+    Serial.print("Fault 0x"); Serial.println(fault, HEX);
+    if (fault & MAX31865_FAULT_HIGHTHRESH) {
+      Serial.println("RTD High Threshold"); 
+    }
+    if (fault & MAX31865_FAULT_LOWTHRESH) {
+      Serial.println("RTD Low Threshold"); 
+    }
+    if (fault & MAX31865_FAULT_REFINLOW) {
+      Serial.println("REFIN- > 0.85 x Bias"); 
+    }
+    if (fault & MAX31865_FAULT_REFINHIGH) {
+      Serial.println("REFIN- < 0.85 x Bias - FORCE- open"); 
+    }
+    if (fault & MAX31865_FAULT_RTDINLOW) {
+      Serial.println("RTDIN- < 0.85 x Bias - FORCE- open"); 
+    }
+    if (fault & MAX31865_FAULT_OVUV) {
+      Serial.println("Under/Over voltage"); 
+    }
+    thermo.clearFault();
+  }
+  return temperature;
+}
 
 PIDConfig readPIDConfig() {
   preferences.begin("pid", false);
@@ -68,7 +118,7 @@ void setKd(PIDConfig *conf, PID *pid, double k) {
 }
 
 EspressoNotification notification;
-void handleQueueMessage(EspressoEnv *env, PIDConfig *conf, PID *pid) {
+void handleConfigChangeMsg(EspressoEnv *env, PIDConfig *conf, PID *pid) {
   if (xQueueReceive(env->pidQueue, &notification, 0) == pdPASS) {
     if (notification.type == Notify_Changed_Setpoint_Temp) {
       double value = *static_cast<double *>(notification.value);
@@ -91,8 +141,39 @@ void handleQueueMessage(EspressoEnv *env, PIDConfig *conf, PID *pid) {
   }
 }
 
+
+double lastTemp = 0.0;
+double lastHeatPwr = 0.0;
+void handleTemperatureChange(EspressoEnv *env, PIDConfig *conf, PID *pid) {
+  currentTemp = getCurrentTemperature();
+  if (currentTemp > 0 && currentTemp < 150) {
+    if (lastTemp != round(currentTemp * 100) / 100) {
+      EspressoNotification tempNotification = {Notify_TemperatureMeasurement, new double(currentTemp)};
+      xQueueSendToBack(env->bleQueue, &tempNotification, 0);
+      lastTemp = round(currentTemp * 100) / 100;
+    }
+    if (pid->Compute()) {
+      EspressoNotification heatPwrNotification = {Notify_HeaterPower, new double(output * 10000)};
+      xQueueSendToBack(env->heaterQueue, &heatPwrNotification, 0);
+
+      if (lastHeatPwr != round(output * 100) / 100) {
+        EspressoNotification bleHeatNotification = {Notify_HeaterPower, new double(lastHeatPwr)};
+        xQueueSendToBack(env->bleQueue, &bleHeatNotification, 0);
+        lastHeatPwr = round(output * 100) / 100;
+      }
+    }
+    Serial.printf("PID loop: %.3f / %.3f / %.3f\n", currentTemp, conf->setpointTemp, output);
+  } else {
+    Serial.printf("WARNING! Temperature annomaly: %.3f degrees C\n", currentTemp);
+    EspressoNotification heatPwrNotification = {Notify_HeaterPower, new double(0.0)};
+    xQueueSendToBack(env->heaterQueue, &heatPwrNotification, 0);
+    EspressoNotification bleHeatNotification = {Notify_HeaterPower, new double(0.0)};
+    xQueueSendToBack(env->bleQueue, &bleHeatNotification, 0);
+  }
+}
+
 void pidTask(void *parameter) {
-  blinkStatusLED(5000);
+  blinkStatusLED(3000);
   Serial.println("Starting PID task");
   EspressoEnv *env = static_cast<EspressoEnv *>(parameter);
 
@@ -100,10 +181,7 @@ void pidTask(void *parameter) {
   PID pid(&currentTemp, &output, &conf.setpointTemp, conf.kP, conf.kI, conf.kD, DIRECT);
   pid.SetOutputLimits(0, 1);
   pid.SetMode(AUTOMATIC);
-  currentTemp = 23.0;
-
-  double lastTemp = 0.0;
-  double lastHeatPwr = 0.0;
+  currentTemp = 100.0;
 
   EspressoNotification currentSettingsNotification = {
       Notify_Current_Settings,
@@ -111,27 +189,8 @@ void pidTask(void *parameter) {
   xQueueSendToBack(env->bleQueue, &currentSettingsNotification, 0);
 
   while (true) {
-    handleQueueMessage(env, &conf, &pid);
-    currentTemp += output;
-    if (output <= 0.1) {
-      currentTemp -= 0.1;
-    }
-    if (lastTemp != round(currentTemp * 100) / 100) {
-      EspressoNotification tempNotification = {Notify_TemperatureMeasurement, new double(currentTemp)};
-      xQueueSendToBack(env->bleQueue, &tempNotification, 0);
-      lastTemp = round(currentTemp * 100) / 100;
-    }
-    if (pid.Compute()) {
-      EspressoNotification heaterNotification = {Notify_HeaterPower, new double(output * 10000)};
-      xQueueSendToBack(env->heaterQueue, &heaterNotification, 0);
-
-      if (lastHeatPwr != round(output * 100) / 100) {
-        EspressoNotification heatNotification = {Notify_HeaterPower, new double(lastHeatPwr)};
-        xQueueSendToBack(env->bleQueue, &heatNotification, 0);
-        lastHeatPwr = round(output * 100) / 100;
-      }
-    }
-    // Serial.printf("PID loop: %.3f / %.3f / %.3f\n", currentTemp, conf.setpointTemp, output);
+    handleConfigChangeMsg(env, &conf, &pid);
+    handleTemperatureChange(env, &conf, &pid);
     vTaskDelay(PID_Compute_Interval / portTICK_RATE_MS);
   }
   vTaskDelete(NULL);

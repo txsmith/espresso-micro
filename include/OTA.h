@@ -1,13 +1,12 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
-
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 
 void ota_handle(void *parameter) {
   for (;;) {
     ArduinoOTA.handle();
-    delay(3500);
+    vTaskDelay(3500 / portTICK_RATE_MS);;
   }
 }
 
